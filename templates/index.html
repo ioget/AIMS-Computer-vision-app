@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Intel Image Classifier</title>
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CDN with custom color theme -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg:           '#0A0C10',
+            card:         '#161B22',
+            border:       '#30363D',
+            'text-main':  '#E6EDF3',
+            'text-muted': '#8B949E',
+            accent:       '#2F81F7',
+            success:      '#238636',
+            highlight:    '#3FB950',
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* ─── Spinner animation ─── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 1s linear infinite; }
+
+    /* ─── Category card scale on hover ─── */
+    .cat-card { transition: transform 0.2s ease; }
+    .cat-card:hover { transform: scale(1.02); }
+
+    /* ─── Highlight glow for matched category ─── */
+    .cat-predicted {
+      border-width: 2px !important;
+      border-color: #3FB950 !important;
+      transform: scale(1.03);
+      z-index: 10;
+      box-shadow: 0 0 20px rgba(63, 185, 80, 0.25);
+    }
+
+    /* ─── Drag-over state ─── */
+    .dragging {
+      border-color: #2F81F7 !important;
+      background-color: rgba(22, 27, 34, 0.5);
+    }
+
+    /* ─── Result card fade-in ─── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { animation: fadeUp 0.35s ease forwards; }
+  </style>
+</head>
+
+<body class="min-h-screen bg-bg text-text-main font-sans py-10 px-6 lg:px-10 flex flex-col">
+<div class="max-w-7xl mx-auto w-full flex-1 flex flex-col">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="text-center mb-8">
+    <h1 class="text-[32px] font-bold tracking-tight text-text-main mb-2">
+      Intel Image Classifier
+    </h1>
+    <p class="text-base text-text-muted max-w-2xl mx-auto">
+      Upload an image and classify it using AI models (PyTorch or TensorFlow)
+    </p>
+  </header>
+
+  <!-- ── Main grid ────────────────────────────────────────────────────────── -->
+  <main class="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-8 flex-1">
+
+    <!-- Left column: upload + model selector + button -->
+    <section class="flex flex-col gap-6">
+
+      <!-- Upload box -->
+      <div class="w-full mb-2" id="upload-wrapper">
+
+        <!-- Drop zone (visible when no image selected) -->
+        <div id="drop-zone"
+             class="relative border-2 border-dashed border-border rounded-xl h-[240px] transition-all duration-200
+                    flex flex-col items-center justify-center cursor-pointer overflow-hidden bg-card/30
+                    hover:border-accent"
+             onclick="document.getElementById('file-input').click()"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)"
+             ondrop="handleDrop(event)">
+          <input id="file-input" type="file" accept="image/*" class="hidden" onchange="handleFileChange(event)" />
+          <div class="relative z-10 text-center p-5 pointer-events-none">
+            <!-- Upload icon (SVG) -->
+            <svg class="w-8 h-8 text-accent mx-auto mb-3" xmlns="http://www.w3.org/2000/svg"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round"
+                    d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1
+                       M12 12V4m0 0L8 8m4-4l4 4" />
+            </svg>
+            <p class="text-sm font-semibold text-text-main mb-1">Click or drag image to upload</p>
+            <p class="text-xs text-text-muted">PNG, JPG or WEBP (max. 5MB)</p>
+          </div>
+        </div>
+
+        <!-- Preview (hidden until image selected) -->
+        <div id="preview-box"
+             class="hidden relative rounded-xl overflow-hidden bg-card h-[240px] flex items-center
+                    justify-center border border-border group">
+          <img id="preview-img" src="" alt="Preview"
+               class="w-full h-full object-cover opacity-60 group-hover:opacity-40 transition-opacity" />
+          <div class="absolute inset-0 flex flex-col items-center justify-center p-4 text-center pointer-events-none">
+            <p class="text-sm font-semibold text-white drop-shadow-lg mb-1">Image selected successfully</p>
+            <p class="text-xs text-text-muted drop-shadow-lg">Ready for classification</p>
+          </div>
+          <button onclick="clearFile()"
+                  class="absolute top-3 right-3 bg-card/80 backdrop-blur-sm p-1.5 rounded-md border border-border
+                         shadow-md hover:bg-card transition-colors z-20">
+            <!-- X icon -->
+            <svg class="w-4 h-4 text-text-main" xmlns="http://www.w3.org/2000/svg"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Spacer -->
+      <div class="flex flex-col gap-6 mt-auto">
+
+        <!-- Model selector -->
+        <div class="flex flex-col gap-3">
+          <label class="text-[12px] font-semibold uppercase tracking-wider text-text-muted">
+            Selection Model
+          </label>
+          <div class="flex bg-card border border-border p-1 rounded-lg">
+            <button id="btn-pytorch"
+                    onclick="selectModel('pytorch')"
+                    class="flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200
+                           bg-accent text-white shadow-sm">
+              PyTorch Model
+            </button>
+            <button id="btn-tensorflow"
+                    onclick="selectModel('tensorflow')"
+                    class="flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200
+                           text-text-muted hover:text-text-main">
+              TensorFlow Model
+            </button>
+          </div>
+        </div>
+
+        <!-- Classify button -->
+        <button id="classify-btn"
+                onclick="classifyImage()"
+                disabled
+                class="w-full flex items-center justify-center gap-3 py-4 rounded-lg font-semibold text-base
+                       transition-all duration-200 bg-border text-text-muted cursor-not-allowed">
+          <!-- Sparkles icon -->
+          <svg id="btn-icon-sparkles" class="w-5 h-5" xmlns="http://www.w3.org/2000/svg"
+               fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M5 3l1.5 4.5L11 9l-4.5 1.5L5 15l-1.5-4.5L-1 9l4.5-1.5L5 3z
+                     M19 11l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" />
+          </svg>
+          <!-- Loader icon (hidden by default) -->
+          <svg id="btn-icon-loader" class="w-5 h-5 animate-spin hidden"
+               xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor"
+                  d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span id="btn-label">Classify Image</span>
+        </button>
+
+        <!-- Error message -->
+        <div id="error-box"
+             class="hidden p-3 bg-red-900/20 border border-red-500/50 text-red-400 rounded-lg text-xs font-medium">
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Right column: result + category grid -->
+    <section class="flex flex-col gap-6">
+
+      <!-- Result card (hidden until result available) -->
+      <div id="result-card"
+           class="hidden fade-up w-full bg-card rounded-2xl border border-border p-6
+                  flex items-center gap-8 shadow-2xl">
+        <div class="flex-1">
+          <p class="text-[12px] text-text-muted uppercase font-semibold tracking-wider mb-1">
+            Classification Result
+          </p>
+          <h2 id="result-prediction"
+              class="text-4xl font-extrabold text-highlight capitalize tracking-tight">—</h2>
+        </div>
+        <div class="flex gap-8 border-l border-border pl-8">
+          <div class="flex flex-col">
+            <span id="result-confidence" class="text-2xl font-bold text-text-main leading-none">—</span>
+            <span class="text-[11px] text-text-muted uppercase font-bold tracking-tighter mt-1">Confidence</span>
+          </div>
+          <div class="flex flex-col">
+            <span id="result-accuracy" class="text-2xl font-bold text-text-main leading-none">—</span>
+            <span class="text-[11px] text-text-muted uppercase font-bold tracking-tighter mt-1">Accuracy</span>
+          </div>
+          <div class="flex flex-col">
+            <span id="result-loss" class="text-2xl font-bold text-text-main leading-none">—</span>
+            <span class="text-[11px] text-text-muted uppercase font-bold tracking-tighter mt-1">Loss</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Category grid -->
+      <div class="w-full flex-1">
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-4 h-full" id="category-grid">
+
+          <!-- Buildings -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="buildings">
+            <img src="https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&q=80&w=400"
+                 alt="Buildings"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Buildings
+            </span>
+          </div>
+
+          <!-- Forest -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="forest">
+            <img src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&q=80&w=400"
+                 alt="Forest"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Forest
+            </span>
+          </div>
+
+          <!-- Glacier -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="glacier">
+            <img src="https://images.unsplash.com/photo-1473081556163-2a17de81fc97?auto=format&fit=crop&q=80&w=400"
+                 alt="Glacier"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Glacier
+            </span>
+          </div>
+
+          <!-- Mountain -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="mountain">
+            <img src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&q=80&w=400"
+                 alt="Mountain"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Mountain
+            </span>
+          </div>
+
+          <!-- Sea -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="sea">
+            <img src="https://images.unsplash.com/photo-1505118380757-91f5f5632de0?auto=format&fit=crop&q=80&w=400"
+                 alt="Sea"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Sea
+            </span>
+          </div>
+
+          <!-- Street -->
+          <div class="cat-card relative rounded-xl overflow-hidden flex items-end p-4
+                      border border-border bg-card h-full min-h-[160px] transition-all duration-300"
+               data-category="street">
+            <img src="https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&q=80&w=400"
+                 alt="Street"
+                 class="cat-img absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-300"
+                 referrerpolicy="no-referrer" />
+            <span class="relative z-10 font-bold text-sm text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] uppercase tracking-wide">
+              Street
+            </span>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Training Results ─────────────────────────────────────────────────── -->
+  <section class="mt-16">
+    <div class="border-t border-border pt-10">
+      <h2 class="text-xl font-bold text-text-main mb-1">Training Results</h2>
+      <p class="text-sm text-text-muted mb-8">Metrics and graphs from model training: PyTorch &amp; TensorFlow</p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <!-- Training curves PyTorch -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">PyTorch: Training Curves</p>
+          </div>
+          <img src="/result/training_with_pytorch.png" alt="Training curves PyTorch" class="w-full object-contain" />
+        </div>
+
+        <!-- Training curves Keras -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Keras: Training Curves</p>
+          </div>
+          <img src="/result/training_with_keras.png" alt="Training curves Keras" class="w-full object-contain" />
+        </div>
+
+        <!-- Confusion matrix PyTorch -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">PyTorch: Confusion Matrix</p>
+          </div>
+          <img src="/result/confusion_matrix_pytorch.png" alt="Confusion matrix PyTorch" class="w-full object-contain" />
+        </div>
+
+        <!-- Confusion matrix TensorFlow -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">TensorFlow: Confusion Matrix</p>
+          </div>
+          <img src="/result/confusion_matrix_tensorflow.png" alt="Confusion matrix TensorFlow" class="w-full object-contain" />
+        </div>
+
+        <!-- Classification report PyTorch -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">PyTorch: Classification Report</p>
+          </div>
+          <img src="/result/classification_report_pytorch.png" alt="Classification report PyTorch" class="w-full object-contain" />
+        </div>
+
+        <!-- Classification report TensorFlow -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">TensorFlow: Classification Report</p>
+          </div>
+          <img src="/result/classification_report_tensorflow.png" alt="Classification report TensorFlow" class="w-full object-contain" />
+        </div>
+
+        <!-- Per-class accuracy PyTorch -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">PyTorch: Per-class Accuracy</p>
+          </div>
+          <img src="/result/per_class_accuracy_pytorch.png" alt="Per-class accuracy PyTorch" class="w-full object-contain" />
+        </div>
+
+        <!-- Per-class accuracy TensorFlow -->
+        <div class="bg-card border border-border rounded-xl overflow-hidden">
+          <div class="px-4 pt-4 pb-2">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-text-muted">TensorFlow: Per-class Accuracy</p>
+          </div>
+          <img src="/result/per_class_accuracy_tensorflow.png" alt="Per-class accuracy TensorFlow" class="w-full object-contain" />
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────────── -->
+  <footer class="mt-12 text-center text-text-muted text-xs border-t border-border pt-6">
+    <p>© 2026 Intel Image Classifier. Built with Flask &amp; TailwindCSS.</p>
+  </footer>
+
+</div>
+
+<!-- ── JavaScript ────────────────────────────────────────────────────────── -->
+<script>
+  /* ── State ── */
+  let selectedFile  = null;
+  let selectedModel = 'pytorch';
+
+  /* ── Model selector ── */
+  function selectModel(model) {
+    selectedModel = model;
+    const btnPt = document.getElementById('btn-pytorch');
+    const btnTf = document.getElementById('btn-tensorflow');
+
+    if (model === 'pytorch') {
+      btnPt.className = 'flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200 bg-accent text-white shadow-sm';
+      btnTf.className = 'flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200 text-text-muted hover:text-text-main';
+    } else {
+      btnTf.className = 'flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200 bg-accent text-white shadow-sm';
+      btnPt.className = 'flex-1 py-2.5 rounded-md text-sm font-medium transition-all duration-200 text-text-muted hover:text-text-main';
+    }
+  }
+
+  /* ── File handling ── */
+  function handleFileChange(event) {
+    const file = event.target.files[0];
+    if (file) setFile(file);
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault();
+    document.getElementById('drop-zone').classList.add('dragging');
+  }
+
+  function handleDragLeave(event) {
+    event.preventDefault();
+    document.getElementById('drop-zone').classList.remove('dragging');
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    document.getElementById('drop-zone').classList.remove('dragging');
+    const file = event.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) setFile(file);
+  }
+
+  function setFile(file) {
+    selectedFile = file;
+    hideError();
+    resetResult();
+
+    /* Show preview */
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      document.getElementById('preview-img').src = reader.result;
+      document.getElementById('drop-zone').classList.add('hidden');
+      document.getElementById('preview-box').classList.remove('hidden');
+    };
+    reader.readAsDataURL(file);
+
+    /* Enable classify button */
+    enableButton();
+  }
+
+  function clearFile() {
+    selectedFile = null;
+    document.getElementById('file-input').value = '';
+    document.getElementById('preview-img').src = '';
+    document.getElementById('preview-box').classList.add('hidden');
+    document.getElementById('drop-zone').classList.remove('hidden');
+    disableButton();
+    resetResult();
+    hideError();
+  }
+
+  /* ── Button states ── */
+  function enableButton() {
+    const btn = document.getElementById('classify-btn');
+    btn.disabled = false;
+    btn.className = 'w-full flex items-center justify-center gap-3 py-4 rounded-lg font-semibold text-base ' +
+                    'transition-all duration-200 bg-accent text-white hover:brightness-110 active:scale-[0.98]';
+  }
+
+  function disableButton() {
+    const btn = document.getElementById('classify-btn');
+    btn.disabled = true;
+    btn.className = 'w-full flex items-center justify-center gap-3 py-4 rounded-lg font-semibold text-base ' +
+                    'transition-all duration-200 bg-border text-text-muted cursor-not-allowed';
+  }
+
+  function setLoading(loading) {
+    const loader   = document.getElementById('btn-icon-loader');
+    const sparkles = document.getElementById('btn-icon-sparkles');
+    const label    = document.getElementById('btn-label');
+
+    if (loading) {
+      loader.classList.remove('hidden');
+      sparkles.classList.add('hidden');
+      label.textContent = 'Processing...';
+      disableButton();
+      /* keep cursor-not-allowed off so it looks busy, not disabled */
+      document.getElementById('classify-btn').disabled = true;
+    } else {
+      loader.classList.add('hidden');
+      sparkles.classList.remove('hidden');
+      label.textContent = 'Classify Image';
+      if (selectedFile) enableButton();
+    }
+  }
+
+  /* ── Error ── */
+  function showError(msg) {
+    const box = document.getElementById('error-box');
+    box.textContent = msg;
+    box.classList.remove('hidden');
+  }
+
+  function hideError() {
+    document.getElementById('error-box').classList.add('hidden');
+  }
+
+  /* ── Result ── */
+  function showResult(data) {
+    document.getElementById('result-prediction').textContent = data.prediction;
+    document.getElementById('result-confidence').textContent = (data.confidence * 100).toFixed(1) + '%';
+    document.getElementById('result-accuracy').textContent   = (data.metrics.accuracy * 100).toFixed(1) + '%';
+    document.getElementById('result-loss').textContent       = data.metrics.loss.toFixed(2);
+
+    const card = document.getElementById('result-card');
+    card.classList.remove('hidden');
+    /* re-trigger animation */
+    card.classList.remove('fade-up');
+    void card.offsetWidth;
+    card.classList.add('fade-up');
+
+    highlightCategory(data.prediction);
+  }
+
+  function resetResult() {
+    document.getElementById('result-card').classList.add('hidden');
+    highlightCategory(null);
+  }
+
+  /* ── Category highlight ── */
+  function highlightCategory(prediction) {
+    document.querySelectorAll('.cat-card').forEach(card => {
+      const cat   = card.getAttribute('data-category');
+      const img   = card.querySelector('.cat-img');
+      const badge = card.querySelector('.cat-badge');
+
+      const isMatch = prediction && cat.toLowerCase() === prediction.toLowerCase();
+
+      if (isMatch) {
+        card.classList.add('cat-predicted');
+        img.classList.replace('opacity-50', 'opacity-90');
+        if (!badge) {
+          const b = document.createElement('div');
+          b.className = 'cat-badge absolute top-3 right-3 bg-highlight text-white text-[9px] ' +
+                        'font-extrabold px-2 py-0.5 rounded uppercase z-20';
+          b.textContent = 'Match';
+          card.appendChild(b);
+        }
+      } else {
+        card.classList.remove('cat-predicted');
+        img.classList.replace('opacity-90', 'opacity-50');
+        const badge2 = card.querySelector('.cat-badge');
+        if (badge2) badge2.remove();
+      }
+    });
+  }
+
+  /* ── Classify ── */
+  async function classifyImage() {
+    if (!selectedFile) return;
+
+    setLoading(true);
+    hideError();
+    resetResult();
+
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+    formData.append('model', selectedModel);
+
+    try {
+      const response = await fetch('/predict', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        showError(data.error || 'Erreur lors de la classification.');
+        return;
+      }
+
+      showResult(data);
+    } catch (err) {
+      showError('Failed to classify image. Please try again.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+</script>
+
+</body>
+</html>
